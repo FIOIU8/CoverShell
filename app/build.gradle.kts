@@ -55,16 +55,11 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
-    // MIUIX项目
-    implementation(libs.miuix.ui.android)
-    // 可选：添加 miuix-preference 以获取 Preference 组件
-    implementation(libs.miuix.preference.android)
-    // 可选：添加 miuix-icons 以获取更多图标
-    implementation(libs.miuix.icons.android)
-    // 可选：添加 miuix-shapes 以获取平滑圆角
-    implementation(libs.miuix.shapes.android)
-    // 可选：添加 miuix-blur 以获取模糊效果（需要 minSdk 31）
-    implementation(libs.miuix.blur.android)
-    // 可选：添加 miuix-navigation3-ui 以获取 Navigation3 支持
-    implementation(libs.miuix.navigation3.ui.android)
+    implementation("androidx.compose.material:material-icons-extended:1.6.3")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4:1.6.3")
+    // Root权限和shell执行相关
+    implementation("com.jrummyapps:android-shell:1.0.1")
+    // 文件操作增强
+    implementation("commons-io:commons-io:2.11.0")
+    implementation("androidx.core:core:1.12.0")
 }
