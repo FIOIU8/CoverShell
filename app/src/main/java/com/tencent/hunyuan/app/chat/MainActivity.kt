@@ -15,8 +15,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
@@ -119,7 +117,7 @@ fun MainUI() {
         AlertDialog(
             onDismissRequest = { showAbout = false },
             title = { Text("关于") },
-            text = { Text("自动 Root 适配文件管理器\n修复终端su卡死") },
+            text = { Text("自动ROOT适配\n支持查看系统目录\n终端命令执行") },
             confirmButton = { TextButton(onClick = { showAbout = false }) { Text("确定") } }
         )
     }
@@ -225,22 +223,6 @@ fun FileManagerScreen(modifier: Modifier = Modifier) {
     }
 
     Column(modifier.fillMaxSize()) {
-        LazyRow(Modifier.fillMaxWidth().padding(8.dp)) {
-            items(listOf(
-                "下载" to Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath,
-                "图片" to Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).absolutePath,
-                "存储" to Environment.getExternalStorageDirectory().absolutePath,
-                "根目录" to "/"
-            )) { (name, path) ->
-                Card({
-                    left = left.copy(currentDirectory = path)
-                    refresh(left) { left = it }
-                }, Modifier.padding(4.dp)) {
-                    Row(Modifier.padding(8.dp)) { Text(name) }
-                }
-            }
-        }
-
         Row(Modifier.weight(1f)) {
             FilePanel(
                 state = left,
@@ -298,12 +280,14 @@ fun FilePanel(
 
         LazyColumn(Modifier.weight(1f)) {
             item { Text("目录 (${state.directories.size})", Modifier.padding(vertical = 4.dp)) }
-            items(state.directories) { dir ->
+            items(state.directories.size) { i ->
+                val dir = state.directories[i]
                 FileItem(dir, true, state.selectedFile == dir, { onNavigate(dir) }, { onSelect(dir) })
             }
 
             item { Text("文件 (${state.files.size})", Modifier.padding(vertical = 4.dp)) }
-            items(state.files) { f ->
+            items(state.files.size) { i ->
+                val f = state.files[i]
                 FileItem(f, false, state.selectedFile == f, {}, { onSelect(f) })
             }
         }
