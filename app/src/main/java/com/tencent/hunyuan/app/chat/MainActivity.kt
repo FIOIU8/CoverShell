@@ -11,13 +11,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.MarqueeAnimationMode
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -31,14 +37,17 @@ import java.io.File
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
-// Miuix 核心组件
+// Miuix 正确全量导入
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.utils.overScrollVertical
+import top.yukonga.miuix.kmp.utils.scrollEndHaptic
+import top.yukonga.miuix.kmp.utils.pressable
+import top.yukonga.miuix.kmp.utils.TiltFeedback
 
-// 图标
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+// Compose 核心交互
+import androidx.compose.foundation.interaction.MutableInteractionSource
 
 data class FileManagerState(
     val currentDirectory: String = Environment.getExternalStorageDirectory().absolutePath,
@@ -56,7 +65,6 @@ data class TerminalState(
 
 class MainActivity : ComponentActivity() {
 
-    // ====================== 修复：提前声明权限请求器（解决所有类型推断/导入错误） ======================
     private val requestStoragePermission: ActivityResultLauncher<String> =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
@@ -87,7 +95,6 @@ class MainActivity : ComponentActivity() {
                     Manifest.permission.READ_EXTERNAL_STORAGE
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
-                // 直接使用声明好的权限请求器
                 requestStoragePermission.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
         }
@@ -111,10 +118,7 @@ fun MainUI() {
                         )
                     }
                     IconButton(onClick = { showAbout = true }) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null
-                        )
+                        Icon(Icons.Default.Info, null)
                     }
                 }
             )
@@ -124,7 +128,6 @@ fun MainUI() {
             if (uiMode == "file") FileManagerScreen() else TerminalScreen()
         }
 
-        // Miuix 统一弹窗
         OverlayDialog(
             show = showAbout,
             title = "关于",
@@ -132,10 +135,7 @@ fun MainUI() {
             onDismissRequest = { showAbout = false },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Button(
-                onClick = { showAbout = false },
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            Button(onClick = { showAbout = false }, modifier = Modifier.fillMaxWidth()) {
                 Text("确定")
             }
         }
@@ -224,36 +224,55 @@ fun FileManagerScreen() {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.weight(1f)) {
             FilePanel(
-                state = left, Modifier.weight(1f),
-                onNavigate = { f -> left = left.copy(currentDirectory = f.absolutePath).also { refresh(left) { left = it } } },
-                onSelect = { f -> left = left.copy(selectedFile = if (left.selectedFile == f) null else f) }
+                state = left, modifier = Modifier.weight(1f),
+                onNavigate = { f ->
+                    left = left.copy(currentDirectory = f.absolutePath)
+                    refresh(left) { left = it }
+                },
+                onSelect = { f ->
+                    left = left.copy(selectedFile = if (left.selectedFile == f) null else f)
+                }
             )
             FilePanel(
-                state = right, Modifier.weight(1f),
-                onNavigate = { f -> right = right.copy(currentDirectory = f.absolutePath).also { refresh(right) { right = it } } },
-                onSelect = { f -> right = right.copy(selectedFile = if (right.selectedFile == f) null else f) }
+                state = right, modifier = Modifier.weight(1f),
+                onNavigate = { f ->
+                    right = right.copy(currentDirectory = f.absolutePath)
+                    refresh(right) { right = it }
+                },
+                onSelect = { f ->
+                    right = right.copy(selectedFile = if (right.selectedFile == f) null else f)
+                }
             )
-        }
-        Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-            Button(onClick = { refresh(left) { left = it }; refresh(right) { right = it } }) { Text("刷新") }
-            Button(onClick = { left = left.copy(selectedFile = null); right = right.copy(selectedFile = null) }) { Text("取消选择") }
         }
     }
 }
 
 @Composable
-fun FilePanel(state: FileManagerState, modifier: Modifier, onNavigate: (File) -> Unit, onSelect: (File) -> Unit) {
+fun FilePanel(
+    state: FileManagerState,
+    modifier: Modifier,
+    onNavigate: (File) -> Unit,
+    onSelect: (File) -> Unit
+) {
     Column(modifier.padding(8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { File(state.currentDirectory).parentFile?.let { onNavigate(it) } }) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = null
-                )
+                Icon(Icons.Default.ArrowBack, null)
             }
-            Text("路径: ${state.currentDirectory}", Modifier.weight(1f), maxLines = 1)
+            Text(
+                text = "路径: ${state.currentDirectory}",
+                modifier = Modifier.weight(1f).basicMarquee(animationMode = MarqueeAnimationMode.Immediately),
+                maxLines = 1
+            )
         }
-        LazyColumn(Modifier.weight(1f)) {
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .overScrollVertical()
+                .scrollEndHaptic(),
+            overscrollEffect = null
+        ) {
             item { Text("目录 (${state.directories.size})", fontWeight = FontWeight.Medium) }
             items(state.directories) { dir ->
                 FileItem(dir, true, state.selectedFile == dir, { onNavigate(dir) }, { onSelect(dir) })
@@ -267,9 +286,24 @@ fun FilePanel(state: FileManagerState, modifier: Modifier, onNavigate: (File) ->
 }
 
 @Composable
-fun FileItem(file: File, isDir: Boolean, isSelected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
-    Surface(Modifier.fillMaxWidth().padding(vertical = 2.dp).clickable(onClick = onClick)) {
-        Row(Modifier.padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+fun FileItem(
+    file: File, isDir: Boolean, isSelected: Boolean,
+    onClick: () -> Unit, onLongClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .pressable(interactionSource = interactionSource, indication = TiltFeedback())
+            .combinedClickable(
+                interactionSource = interactionSource,
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = if (isDir) Icons.Default.Folder else Icons.Default.Description,
                 contentDescription = null,
@@ -313,11 +347,20 @@ fun TerminalScreen() {
 
     Column(Modifier.fillMaxSize().padding(8.dp)) {
         Surface(Modifier.weight(1f).fillMaxWidth()) {
-            LazyColumn(Modifier.padding(12.dp), reverseLayout = true) {
-                items(state.commandHistory.size) { i -> Text(state.commandHistory[i]) }
+            LazyColumn(
+                Modifier
+                    .padding(12.dp)
+                    .overScrollVertical()
+                    .scrollEndHaptic(),
+                reverseLayout = true,
+                overscrollEffect = null
+            ) {
+                items(state.commandHistory.size) { i ->
+                    Text(state.commandHistory[i])
+                }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             TextField(
                 value = state.currentCommand,
                 onValueChange = { state = state.copy(currentCommand = it) },
