@@ -175,20 +175,64 @@ suspend fun hasRoot(): Boolean {
 }
 
 /**
- * 自动加载文件列表（适配ROOT）
+ * 修复：ROOT 权限读取文件列表（支持 / 根目录）
  */
-suspend fun getFilesAuto(path: String): List<File> {
+suspend fun getFilesWithRoot(path: String): List<File> {
     return withContext(Dispatchers.IO) {
         try {
-            val dir = File(path)
-            if (dir.exists() && dir.isDirectory) {
-                dir.listFiles()?.filter { it.exists() }?.toList() ?: emptyList()
-            } else {
-                emptyList()
+            // 先用普通方式尝试
+            val normalFiles = File(path).listFiles()?.filter { it.exists() }
+            if (!normalFiles.isNullOrEmpty()) return@withContext normalFiles
+
+            // 普通方式失败 → 使用 ROOT 读取目录
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls -a $path"))
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val fileNames = mutableListOf<String>()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                val name = line?.trim()
+                if (!name.isNullOrBlank() && name != "." && name != "..") {
+                    fileNames.add(name)
+                }
             }
+            process.waitFor()
+            process.destroy()
+            reader.close()
+
+            // 转为 File 对象
+            fileNames.map { File("$path/$it") }.filter { it.exists() }
         } catch (e: Exception) {
             emptyList()
         }
+    }
+}
+
+/**
+ * 修复：ROOT 命令正确执行 + 读取错误流
+ */
+suspend fun runRootCommand(command: String): String {
+    return withContext(Dispatchers.IO) {
+        try {
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
+            // 读取正常输出 + 错误输出（关键！）
+            val output = BufferedReader(InputStreamReader(process.inputStream)).readText()
+            val error = BufferedReader(InputStreamReader(process.errorStream)).readText()
+            process.waitFor(2, TimeUnit.SECONDS)
+            process.destroy()
+            output + error
+        } catch (e: Exception) {
+            "执行异常：${e.message}"
+        }
+    }
+}
+
+// 统一调用：自动选择普通/ROOT
+suspend fun getFilesAuto(path: String): List<File> {
+    val rootFiles = getFilesWithRoot(path)
+    if (rootFiles.isNotEmpty()) return rootFiles
+    return withContext(Dispatchers.IO) {
+        val dir = File(path)
+        if (dir.exists() && dir.isDirectory) dir.listFiles()?.filter { it.exists() } ?: emptyList() else emptyList()
     }
 }
 
@@ -438,27 +482,11 @@ fun TerminalScreen() {
         val command = terminalState.currentCommand.trim()
         if (command.isBlank() || terminalState.isExecuting) return
 
-        // 清空输入框，标记执行中
         terminalState = terminalState.copy(currentCommand = "", isExecuting = true)
 
         coroutineScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                try {
-                    val process = if (isRootAvailable) {
-                        // ROOT权限执行
-                        Runtime.getRuntime().exec(arrayOf("su", "-c", command))
-                    } else {
-                        // 普通权限执行
-                        Runtime.getRuntime().exec(command)
-                    }
-                    // 读取命令输出
-                    BufferedReader(InputStreamReader(process.inputStream)).readText()
-                } catch (e: Exception) {
-                    "执行错误：${e.message}"
-                }
-            }
-
-            // 更新历史记录
+            // 统一用修复的 ROOT 命令执行
+            val result = runRootCommand(command)
             val newHistory = terminalState.commandHistory + "\$ $command\n$result"
             terminalState = terminalState.copy(
                 isExecuting = false,
