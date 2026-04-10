@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -65,7 +66,7 @@ data class TerminalState(
 
 class MainActivity : ComponentActivity() {
 
-    // ✅ 修复：正确的权限请求器（无任何报错）
+    // 修复：正确的权限请求器
     private val requestStorage: ActivityResultLauncher<String> =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
@@ -154,22 +155,11 @@ suspend fun getFilesAuto(path: String): List<File> {
     val root = hasRoot()
     return withContext(Dispatchers.IO) {
         try {
-            if (root) {
-                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls -a $path"))
-                val list = mutableListOf<File>()
-                BufferedReader(InputStreamReader(p.inputStream)).use { r ->
-                    var line: String?
-                    while (r.readLine().also { line = it } != null) {
-                        val name = line?.trim() ?: continue
-                        if (name == "." || name == "..") continue
-                        list.add(File(path, name))
-                    }
-                }
-                p.waitFor(1, TimeUnit.SECONDS)
-                p.destroy()
-                list
+            val dir = File(path)
+            if (dir.exists() && dir.isDirectory) {
+                dir.listFiles()?.filter { it.exists() }?.toList() ?: emptyList()
             } else {
-                File(path).listFiles()?.toList() ?: emptyList()
+                emptyList()
             }
         } catch (e: Exception) {
             emptyList()
@@ -186,7 +176,9 @@ fun FileManagerScreen() {
     fun refresh(target: FileManagerState, update: (FileManagerState) -> Unit) {
         scope.launch {
             val all = getFilesAuto(target.currentDirectory)
-            update(target.copy(directories = all.filter { it.isDirectory }, files = all.filter { it.isFile }))
+            val dirs = all.filter { it.isDirectory }
+            val files = all.filter { !it.isDirectory }
+            update(target.copy(directories = dirs, files = files))
         }
     }
 
@@ -199,9 +191,11 @@ fun FileManagerScreen() {
         Row(Modifier.weight(1f)) {
             FilePanel(
                 state = left, modifier = Modifier.weight(1f),
-                onNavigate = {
-                    left = left.copy(currentDirectory = it.absolutePath)
-                    refresh(left) { left = it }
+                onNavigate = { file ->
+                    if (file.isDirectory) {
+                        left = left.copy(currentDirectory = file.absolutePath)
+                        refresh(left) { left = it }
+                    }
                 },
                 onSelect = {
                     left = left.copy(selectedFile = if (left.selectedFile == it) null else it)
@@ -211,9 +205,11 @@ fun FileManagerScreen() {
 
             FilePanel(
                 state = right, modifier = Modifier.weight(1f),
-                onNavigate = {
-                    right = right.copy(currentDirectory = it.absolutePath)
-                    refresh(right) { right = it }
+                onNavigate = { file ->
+                    if (file.isDirectory) {
+                        right = right.copy(currentDirectory = file.absolutePath)
+                        refresh(right) { right = it }
+                    }
                 },
                 onSelect = {
                     right = right.copy(selectedFile = if (right.selectedFile == it) null else it)
@@ -232,15 +228,16 @@ fun FilePanel(
     onSelect: (File) -> Unit,
     onRefresh: () -> Unit
 ) {
+    val currentDir = File(state.currentDirectory)
+    val parentDir = currentDir.parentFile
+
     Column(modifier.padding(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { File(state.currentDirectory).parentFile?.let { onNavigate(it) } }) {
-                Icon(Icons.Default.ArrowBack, null)
-            }
             Text(
                 text = "路径: ${state.currentDirectory}",
                 modifier = Modifier.weight(1f).basicMarquee(animationMode = MarqueeAnimationMode.Immediately),
-                maxLines = 1
+                maxLines = 1,
+                fontWeight = FontWeight.Medium
             )
             IconButton(onClick = onRefresh) {
                 Icon(Icons.Default.Refresh, null)
@@ -254,14 +251,57 @@ fun FilePanel(
                 .scrollEndHaptic(),
             overscrollEffect = null
         ) {
-            item { Text("目录 (${state.directories.size})", fontWeight = FontWeight.Medium) }
+            // ====================== 始终置顶的 .. 返回上级文件夹 ======================
+            item {
+                BackFolderItem(
+                    parentDir = parentDir,
+                    onNavigate = onNavigate
+                )
+            }
+
+            // 文件夹列表
+            item { Text("目录 (${state.directories.size})", fontWeight = FontWeight.Medium, modifier = Modifier.padding(vertical = 4.dp)) }
             items(state.directories) { dir ->
                 FileItem(dir, true, state.selectedFile == dir, { onNavigate(dir) }, { onSelect(dir) })
             }
-            item { Spacer(Modifier.height(8.dp)); Text("文件 (${state.files.size})", fontWeight = FontWeight.Medium) }
+
+            // 文件列表
+            item { Spacer(Modifier.height(8.dp)) }
+            item { Text("文件 (${state.files.size})", fontWeight = FontWeight.Medium, modifier = Modifier.padding(vertical = 4.dp)) }
             items(state.files) { f ->
                 FileItem(f, false, state.selectedFile == f, {}, { onSelect(f) })
             }
+        }
+    }
+}
+
+// ====================== .. 返回上级目录 固定项 ======================
+@Composable
+fun BackFolderItem(parentDir: File?, onNavigate: (File) -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .pressable(interactionSource = interactionSource, indication = TiltFeedback())
+            .clickable {
+                parentDir?.let { onNavigate(it) }
+            }
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.ArrowUpward, null, Modifier.size(32.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "..",
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
         }
     }
 }
@@ -289,7 +329,7 @@ fun FileItem(
             Spacer(Modifier.width(8.dp))
             Column {
                 Text(file.name, fontWeight = FontWeight.Medium)
-                Text(if (isDir) "${file.listFiles()?.size ?: 0} 项" else formatSize(file.length()))
+                Text(if (isDir) "文件夹" else formatSize(file.length()))
             }
         }
     }
