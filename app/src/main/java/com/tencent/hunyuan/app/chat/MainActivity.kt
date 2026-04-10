@@ -15,6 +15,7 @@ import androidx.compose.foundation.MarqueeAnimationMode
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -47,9 +48,7 @@ import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 import top.yukonga.miuix.kmp.utils.pressable
 import top.yukonga.miuix.kmp.utils.TiltFeedback
 
-// Compose 基础
-import androidx.compose.foundation.interaction.MutableInteractionSource
-
+// ====================== 状态数据类 ======================
 data class FileManagerState(
     val currentDirectory: String = Environment.getExternalStorageDirectory().absolutePath,
     val directories: List<File> = emptyList(),
@@ -58,15 +57,14 @@ data class FileManagerState(
 )
 
 data class TerminalState(
-    val commandHistory: MutableList<String> = mutableStateListOf(),
+    val commandHistory: List<String> = emptyList(), // 修复：使用不可变列表
     val currentCommand: String = "",
     val isExecuting: Boolean = false,
     val currentDirectory: String = Environment.getExternalStorageDirectory().absolutePath
 )
 
 class MainActivity : ComponentActivity() {
-
-    // 修复：正确的权限请求器
+    // 存储权限请求器
     private val requestStorage: ActivityResultLauncher<String> =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
@@ -86,22 +84,31 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // 权限检查与申请
     private fun checkPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Android 11+ 申请所有文件访问权限
             if (!Environment.isExternalStorageManager()) {
-                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                startActivity(intent)
             }
         } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            // Android 10以下 动态申请存储读取权限
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
                 requestStorage.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
         }
     }
 }
 
+// ====================== 主UI ======================
 @Composable
 fun MainUI() {
-    var uiMode by remember { mutableStateOf("file") }
+    var uiMode by remember { mutableStateOf("file") } // file/terminal
     var showAbout by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -109,20 +116,32 @@ fun MainUI() {
             TopAppBar(
                 title = "ROOT 文件管理器",
                 actions = {
-                    IconButton(onClick = { uiMode = if (uiMode == "file") "terminal" else "file" }) {
-                        Icon(if (uiMode == "file") Icons.Default.Terminal else Icons.Default.Folder, null)
+                    // 切换文件/终端
+                    IconButton(onClick = {
+                        uiMode = if (uiMode == "file") "terminal" else "file"
+                    }) {
+                        Icon(
+                            if (uiMode == "file") Icons.Default.Terminal else Icons.Default.Folder,
+                            contentDescription = "切换模式"
+                        )
                     }
+                    // 关于按钮
                     IconButton(onClick = { showAbout = true }) {
-                        Icon(Icons.Default.Info, null)
+                        Icon(Icons.Default.Info, contentDescription = "关于")
                     }
                 }
             )
         }
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
             if (uiMode == "file") FileManagerScreen() else TerminalScreen()
         }
 
+        // 关于弹窗
         OverlayDialog(
             show = showAbout,
             title = "关于",
@@ -137,22 +156,28 @@ fun MainUI() {
     }
 }
 
+// ====================== 工具方法 ======================
+/**
+ * 检测设备是否拥有ROOT权限
+ */
 suspend fun hasRoot(): Boolean {
     return withContext(Dispatchers.IO) {
         try {
-            val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
-            val text = BufferedReader(InputStreamReader(p.inputStream)).readText()
-            p.waitFor(1, TimeUnit.SECONDS)
-            p.destroy()
-            text.contains("uid=0(root)")
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
+            val result = BufferedReader(InputStreamReader(process.inputStream)).readText()
+            process.waitFor(1, TimeUnit.SECONDS)
+            process.destroy()
+            result.contains("uid=0(root)")
         } catch (e: Exception) {
             false
         }
     }
 }
 
+/**
+ * 自动加载文件列表（适配ROOT）
+ */
 suspend fun getFilesAuto(path: String): List<File> {
-    val root = hasRoot()
     return withContext(Dispatchers.IO) {
         try {
             val dir = File(path)
@@ -167,59 +192,88 @@ suspend fun getFilesAuto(path: String): List<File> {
     }
 }
 
-@Composable
-fun FileManagerScreen() {
-    var left by remember { mutableStateOf(FileManagerState()) }
-    var right by remember { mutableStateOf(FileManagerState(currentDirectory = "/")) }
-    val scope = rememberCoroutineScope()
-
-    fun refresh(target: FileManagerState, update: (FileManagerState) -> Unit) {
-        scope.launch {
-            val all = getFilesAuto(target.currentDirectory)
-            val dirs = all.filter { it.isDirectory }
-            val files = all.filter { !it.isDirectory }
-            update(target.copy(directories = dirs, files = files))
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        refresh(left) { left = it }
-        refresh(right) { right = it }
-    }
-
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.weight(1f)) {
-            FilePanel(
-                state = left, modifier = Modifier.weight(1f),
-                onNavigate = { file ->
-                    if (file.isDirectory) {
-                        left = left.copy(currentDirectory = file.absolutePath)
-                        refresh(left) { left = it }
-                    }
-                },
-                onSelect = {
-                    left = left.copy(selectedFile = if (left.selectedFile == it) null else it)
-                },
-                onRefresh = { refresh(left) { left = it } }
-            )
-
-            FilePanel(
-                state = right, modifier = Modifier.weight(1f),
-                onNavigate = { file ->
-                    if (file.isDirectory) {
-                        right = right.copy(currentDirectory = file.absolutePath)
-                        refresh(right) { right = it }
-                    }
-                },
-                onSelect = {
-                    right = right.copy(selectedFile = if (right.selectedFile == it) null else it)
-                },
-                onRefresh = { refresh(right) { right = it } }
-            )
-        }
+/**
+ * 文件大小格式化（B/KB/MB/GB）
+ */
+fun formatSize(size: Long): String {
+    return when {
+        size < 1024 -> "$size B"
+        size < 1024 * 1024 -> "${size / 1024} KB"
+        size < 1024 * 1024 * 1024 -> "${size / 1024 / 1024} MB"
+        else -> "${size / 1024 / 1024 / 1024} GB"
     }
 }
 
+// ====================== 文件管理器 ======================
+@Composable
+fun FileManagerScreen() {
+    // 左右双面板独立状态
+    var leftPanelState by remember { mutableStateOf(FileManagerState()) }
+    var rightPanelState by remember { mutableStateOf(FileManagerState(currentDirectory = "/")) }
+    val coroutineScope = rememberCoroutineScope()
+
+    // 刷新文件列表
+    fun refreshFileList(
+        currentState: FileManagerState,
+        updateState: (FileManagerState) -> Unit
+    ) {
+        coroutineScope.launch {
+            val fileList = getFilesAuto(currentState.currentDirectory)
+            val directories = fileList.filter { it.isDirectory }
+            val files = fileList.filter { !it.isDirectory }
+            updateState(currentState.copy(directories = directories, files = files))
+        }
+    }
+
+    // 初始化加载
+    LaunchedEffect(Unit) {
+        refreshFileList(leftPanelState) { leftPanelState = it }
+        refreshFileList(rightPanelState) { rightPanelState = it }
+    }
+
+    // 双面板布局
+    Row(Modifier.fillMaxSize()) {
+        // 左侧面板
+        FilePanel(
+            state = leftPanelState,
+            modifier = Modifier.weight(1f),
+            onNavigate = { file ->
+                if (file.isDirectory) {
+                    leftPanelState = leftPanelState.copy(currentDirectory = file.absolutePath)
+                    refreshFileList(leftPanelState) { leftPanelState = it }
+                }
+            },
+            onSelect = {
+                leftPanelState = leftPanelState.copy(
+                    selectedFile = if (leftPanelState.selectedFile == it) null else it
+                )
+            },
+            onRefresh = { refreshFileList(leftPanelState) { leftPanelState = it } }
+        )
+
+        // 右侧面板
+        FilePanel(
+            state = rightPanelState,
+            modifier = Modifier.weight(1f),
+            onNavigate = { file ->
+                if (file.isDirectory) {
+                    rightPanelState = rightPanelState.copy(currentDirectory = file.absolutePath)
+                    refreshFileList(rightPanelState) { rightPanelState = it }
+                }
+            },
+            onSelect = {
+                rightPanelState = rightPanelState.copy(
+                    selectedFile = if (rightPanelState.selectedFile == it) null else it
+                )
+            },
+            onRefresh = { refreshFileList(rightPanelState) { rightPanelState = it } }
+        )
+    }
+}
+
+/**
+ * 单个文件面板（可复用）
+ */
 @Composable
 fun FilePanel(
     state: FileManagerState,
@@ -232,18 +286,25 @@ fun FilePanel(
     val parentDir = currentDir.parentFile
 
     Column(modifier.padding(8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        // 路径栏 + 刷新按钮
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
                 text = "路径: ${state.currentDirectory}",
-                modifier = Modifier.weight(1f).basicMarquee(animationMode = MarqueeAnimationMode.Immediately),
+                modifier = Modifier
+                    .weight(1f)
+                    .basicMarquee(animationMode = MarqueeAnimationMode.Immediately),
                 maxLines = 1,
                 fontWeight = FontWeight.Medium
             )
             IconButton(onClick = onRefresh) {
-                Icon(Icons.Default.Refresh, null)
+                Icon(Icons.Default.Refresh, contentDescription = "刷新")
             }
         }
 
+        // 文件列表
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -251,31 +312,54 @@ fun FilePanel(
                 .scrollEndHaptic(),
             overscrollEffect = null
         ) {
-            // ====================== 始终置顶的 .. 返回上级文件夹 ======================
+            // 返回上级目录
             item {
-                BackFolderItem(
-                    parentDir = parentDir,
-                    onNavigate = onNavigate
-                )
+                BackFolderItem(parentDir = parentDir, onNavigate = onNavigate)
             }
 
             // 文件夹列表
-            item { Text("目录 (${state.directories.size})", fontWeight = FontWeight.Medium, modifier = Modifier.padding(vertical = 4.dp)) }
+            item {
+                Text(
+                    "目录 (${state.directories.size})",
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            }
             items(state.directories) { dir ->
-                FileItem(dir, true, state.selectedFile == dir, { onNavigate(dir) }, { onSelect(dir) })
+                FileItem(
+                    file = dir,
+                    isDir = true,
+                    isSelected = state.selectedFile == dir,
+                    onClick = { onNavigate(dir) },
+                    onLongClick = { onSelect(dir) }
+                )
             }
 
             // 文件列表
             item { Spacer(Modifier.height(8.dp)) }
-            item { Text("文件 (${state.files.size})", fontWeight = FontWeight.Medium, modifier = Modifier.padding(vertical = 4.dp)) }
-            items(state.files) { f ->
-                FileItem(f, false, state.selectedFile == f, {}, { onSelect(f) })
+            item {
+                Text(
+                    "文件 (${state.files.size})",
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            }
+            items(state.files) { file ->
+                FileItem(
+                    file = file,
+                    isDir = false,
+                    isSelected = state.selectedFile == file,
+                    onClick = {},
+                    onLongClick = { onSelect(file) }
+                )
             }
         }
     }
 }
 
-// ====================== .. 返回上级目录 固定项 ======================
+/**
+ * 返回上级目录项
+ */
 @Composable
 fun BackFolderItem(parentDir: File?, onNavigate: (File) -> Unit) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -285,9 +369,7 @@ fun BackFolderItem(parentDir: File?, onNavigate: (File) -> Unit) {
             .fillMaxWidth()
             .padding(vertical = 2.dp)
             .pressable(interactionSource = interactionSource, indication = TiltFeedback())
-            .clickable {
-                parentDir?.let { onNavigate(it) }
-            }
+            .clickable { parentDir?.let { onNavigate(it) } }
     ) {
         Row(
             Modifier
@@ -297,19 +379,21 @@ fun BackFolderItem(parentDir: File?, onNavigate: (File) -> Unit) {
         ) {
             Icon(Icons.Default.ArrowUpward, null, Modifier.size(32.dp))
             Spacer(Modifier.width(8.dp))
-            Text(
-                text = "..",
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp
-            )
+            Text(text = "..", fontWeight = FontWeight.Bold, fontSize = 18.sp)
         }
     }
 }
 
+/**
+ * 文件/文件夹 列表项
+ */
 @Composable
 fun FileItem(
-    file: File, isDir: Boolean, isSelected: Boolean,
-    onClick: () -> Unit, onLongClick: () -> Unit
+    file: File,
+    isDir: Boolean,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
 
@@ -325,7 +409,11 @@ fun FileItem(
             )
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(if (isDir) Icons.Default.Folder else Icons.Default.Description, null, Modifier.size(32.dp))
+            Icon(
+                imageVector = if (isDir) Icons.Default.Folder else Icons.Default.Description,
+                contentDescription = null,
+                modifier = Modifier.size(32.dp)
+            )
             Spacer(Modifier.width(8.dp))
             Column {
                 Text(file.name, fontWeight = FontWeight.Medium)
@@ -335,71 +423,101 @@ fun FileItem(
     }
 }
 
-fun formatSize(s: Long): String {
-    return when {
-        s < 1024 -> "$s B"
-        s < 1024 * 1024 -> "${s / 1024} KB"
-        s < 1024 * 1024 * 1024 -> "${s / 1024 / 1024} MB"
-        else -> "${s / 1024 / 1024 / 1024} GB"
-    }
-}
-
+// ====================== 终端界面 ======================
 @Composable
 fun TerminalScreen() {
-    var state by remember { mutableStateOf(TerminalState()) }
-    val scope = rememberCoroutineScope()
-    var rootAvailable by remember { mutableStateOf(false) }
+    var terminalState by remember { mutableStateOf(TerminalState()) }
+    val coroutineScope = rememberCoroutineScope()
+    var isRootAvailable by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { rootAvailable = hasRoot() }
+    // 初始化检测ROOT权限
+    LaunchedEffect(Unit) { isRootAvailable = hasRoot() }
 
-    fun exec() {
-        val cmd = state.currentCommand.trim()
-        if (cmd.isBlank() || state.isExecuting) return
-        state = state.copy(currentCommand = "", isExecuting = true)
-        scope.launch {
-            val res = withContext(Dispatchers.IO) {
+    // 执行命令
+    fun executeCommand() {
+        val command = terminalState.currentCommand.trim()
+        if (command.isBlank() || terminalState.isExecuting) return
+
+        // 清空输入框，标记执行中
+        terminalState = terminalState.copy(currentCommand = "", isExecuting = true)
+
+        coroutineScope.launch {
+            val result = withContext(Dispatchers.IO) {
                 try {
-                    val process = if (rootAvailable) {
-                        Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+                    val process = if (isRootAvailable) {
+                        // ROOT权限执行
+                        Runtime.getRuntime().exec(arrayOf("su", "-c", command))
                     } else {
-                        Runtime.getRuntime().exec(cmd)
+                        // 普通权限执行
+                        Runtime.getRuntime().exec(command)
                     }
+                    // 读取命令输出
                     BufferedReader(InputStreamReader(process.inputStream)).readText()
                 } catch (e: Exception) {
-                    "错误: ${e.message}"
+                    "执行错误：${e.message}"
                 }
             }
-            state = state.copy(isExecuting = false, commandHistory = (state.commandHistory + "\$ $cmd\n$res").toMutableList())
+
+            // 更新历史记录
+            val newHistory = terminalState.commandHistory + "\$ $command\n$result"
+            terminalState = terminalState.copy(
+                isExecuting = false,
+                commandHistory = newHistory
+            )
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(8.dp)) {
-        Surface(Modifier.weight(1f).fillMaxWidth()) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(8.dp)
+    ) {
+        // 命令输出区域
+        Surface(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
             LazyColumn(
-                Modifier.padding(12.dp).overScrollVertical().scrollEndHaptic(),
-                reverseLayout = true,
+                modifier = Modifier
+                    .padding(12.dp)
+                    .overScrollVertical()
+                    .scrollEndHaptic(),
+                reverseLayout = true, // 最新内容在底部
                 overscrollEffect = null
             ) {
-                items(state.commandHistory.size) { i ->
-                    Text(state.commandHistory[i])
+                items(terminalState.commandHistory) { log ->
+                    Text(log)
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+
+        // 命令输入栏
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             TextField(
-                value = state.currentCommand,
-                onValueChange = { state = state.copy(currentCommand = it) },
+                value = terminalState.currentCommand,
+                onValueChange = { terminalState = terminalState.copy(currentCommand = it) },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { exec() })
+                keyboardActions = KeyboardActions(onDone = { executeCommand() })
             )
             Spacer(Modifier.width(8.dp))
-            Button(onClick = { exec() }, enabled = !state.isExecuting) {
-                Icon(Icons.Default.Send, null)
+            Button(onClick = { executeCommand() }, enabled = !terminalState.isExecuting) {
+                Icon(Icons.Default.Send, contentDescription = "发送")
             }
         }
-        Button(onClick = { state = state.copy(commandHistory = mutableStateListOf()) }, Modifier.fillMaxWidth()) {
+
+        // 清空按钮
+        Button(
+            onClick = { terminalState = terminalState.copy(commandHistory = emptyList()) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Text("清空输出")
         }
     }
