@@ -1,38 +1,38 @@
 package com.tencent.hunyuan.app.chat
 
-/**
- * 全局远程配置文件
- * 作用：统一管理服务器 API 地址（示例配置，本地使用真实地址）
- * 适用：文件管理APP（无登录体系）
- */
 object AppConfig {
+    // 应用配置
+    const val APP_NAME = "文件管理器"
+    const val APP_VERSION = "1.0.0"
 
-    // ==========================
-    // 服务器基础地址
-    // ==========================
-    const val BASE_URL = "https://api.你的服务器.com/"
+    // Root配置
+    const val DEFAULT_SU_PATH = "/system/bin/su"
+    val ALTERNATIVE_SU_PATHS = arrayOf(
+        "/system/xbin/su",
+        "/sbin/su",
+        "/data/adb/magisk/bin/su",
+        "/su/bin/su"
+    )
 
-    // ==========================
-    // 1. 远程配置 API
-    // 作用：获取公告开关、更新开关、功能开关
-    // ==========================
-    const val API_REMOTE_CONFIG = "app/config"
+    // 终端配置
+    const val DEFAULT_TERMINAL_COMMAND = "ls -la"
+    const val MAX_COMMAND_HISTORY = 100
 
-    // ==========================
-    // 2. APP 版本更新 API
-    // 作用：检查新版本、获取下载链接、更新日志、强制更新
-    // ==========================
-    const val API_CHECK_UPDATE = "app/update"
+    // 文件操作配置
+    const val DEFAULT_COPY_BUFFER_SIZE = 8192
 
-    // ==========================
-    // 3. 公告 API
-    // 作用：获取公告标题、内容、是否显示
-    // ==========================
-    const val API_GET_ANNOUNCEMENT = "app/announcement"
+    // 权限配置
+    val REQUIRED_PERMISSIONS = arrayOf(
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+    )
 
-    // ==========================
-    // 4. 文件下载 API
-    // 作用：文件管理APP → 云端文件下载
-    // ==========================
-    const val API_FILE_DOWNLOAD = "file/download"
+    // 特殊目录
+    val SPECIAL_DIRECTORIES = listOf(
+        Pair("下载", "DIRECTORY_DOWNLOADS"),
+        Pair("图片", "DIRECTORY_DCIM"),
+        Pair("文档", "DIRECTORY_DOCUMENTS"),
+        Pair("音乐", "DIRECTORY_MUSIC"),
+        Pair("视频", "DIRECTORY_MOVIES")
+    )
 }
