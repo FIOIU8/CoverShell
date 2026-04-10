@@ -37,7 +37,7 @@ import java.io.File
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
-// Miuix 正确全量导入
+// Miuix 核心
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -46,7 +46,7 @@ import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 import top.yukonga.miuix.kmp.utils.pressable
 import top.yukonga.miuix.kmp.utils.TiltFeedback
 
-// Compose 核心交互
+// Compose 基础
 import androidx.compose.foundation.interaction.MutableInteractionSource
 
 data class FileManagerState(
@@ -65,7 +65,8 @@ data class TerminalState(
 
 class MainActivity : ComponentActivity() {
 
-    private val requestStoragePermission: ActivityResultLauncher<String> =
+    // ✅ 修复：正确的权限请求器（无任何报错）
+    private val requestStorage: ActivityResultLauncher<String> =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onResume() {
@@ -90,12 +91,8 @@ class MainActivity : ComponentActivity() {
                 startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
             }
         } else {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.READ_EXTERNAL_STORAGE
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                requestStoragePermission.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                requestStorage.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
         }
     }
@@ -112,10 +109,7 @@ fun MainUI() {
                 title = "ROOT 文件管理器",
                 actions = {
                     IconButton(onClick = { uiMode = if (uiMode == "file") "terminal" else "file" }) {
-                        Icon(
-                            imageVector = if (uiMode == "file") Icons.Default.Terminal else Icons.Default.Folder,
-                            contentDescription = null
-                        )
+                        Icon(if (uiMode == "file") Icons.Default.Terminal else Icons.Default.Folder, null)
                     }
                     IconButton(onClick = { showAbout = true }) {
                         Icon(Icons.Default.Info, null)
@@ -152,26 +146,6 @@ suspend fun hasRoot(): Boolean {
             text.contains("uid=0(root)")
         } catch (e: Exception) {
             false
-        }
-    }
-}
-
-suspend fun execCommandSafe(command: String, directory: String, useRoot: Boolean): String {
-    return withContext(Dispatchers.IO) {
-        try {
-            val process = if (useRoot) {
-                ProcessBuilder("su", "-c", command).directory(File(directory)).redirectErrorStream(true).start()
-            } else {
-                ProcessBuilder("sh", "-c", command).directory(File(directory)).redirectErrorStream(true).start()
-            }
-            val finished = process.waitFor(5, TimeUnit.SECONDS)
-            if (!finished) {
-                process.destroy()
-                return@withContext "错误：命令超时"
-            }
-            BufferedReader(InputStreamReader(process.inputStream)).use { it.readText().trim() }
-        } catch (e: Exception) {
-            "错误：${e.message}"
         }
     }
 }
@@ -225,23 +199,26 @@ fun FileManagerScreen() {
         Row(Modifier.weight(1f)) {
             FilePanel(
                 state = left, modifier = Modifier.weight(1f),
-                onNavigate = { f ->
-                    left = left.copy(currentDirectory = f.absolutePath)
+                onNavigate = {
+                    left = left.copy(currentDirectory = it.absolutePath)
                     refresh(left) { left = it }
                 },
-                onSelect = { f ->
-                    left = left.copy(selectedFile = if (left.selectedFile == f) null else f)
-                }
+                onSelect = {
+                    left = left.copy(selectedFile = if (left.selectedFile == it) null else it)
+                },
+                onRefresh = { refresh(left) { left = it } }
             )
+
             FilePanel(
                 state = right, modifier = Modifier.weight(1f),
-                onNavigate = { f ->
-                    right = right.copy(currentDirectory = f.absolutePath)
+                onNavigate = {
+                    right = right.copy(currentDirectory = it.absolutePath)
                     refresh(right) { right = it }
                 },
-                onSelect = { f ->
-                    right = right.copy(selectedFile = if (right.selectedFile == f) null else f)
-                }
+                onSelect = {
+                    right = right.copy(selectedFile = if (right.selectedFile == it) null else it)
+                },
+                onRefresh = { refresh(right) { right = it } }
             )
         }
     }
@@ -252,7 +229,8 @@ fun FilePanel(
     state: FileManagerState,
     modifier: Modifier,
     onNavigate: (File) -> Unit,
-    onSelect: (File) -> Unit
+    onSelect: (File) -> Unit,
+    onRefresh: () -> Unit
 ) {
     Column(modifier.padding(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -264,6 +242,9 @@ fun FilePanel(
                 modifier = Modifier.weight(1f).basicMarquee(animationMode = MarqueeAnimationMode.Immediately),
                 maxLines = 1
             )
+            IconButton(onClick = onRefresh) {
+                Icon(Icons.Default.Refresh, null)
+            }
         }
 
         LazyColumn(
@@ -304,11 +285,7 @@ fun FileItem(
             )
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = if (isDir) Icons.Default.Folder else Icons.Default.Description,
-                contentDescription = null,
-                modifier = Modifier.size(32.dp)
-            )
+            Icon(if (isDir) Icons.Default.Folder else Icons.Default.Description, null, Modifier.size(32.dp))
             Spacer(Modifier.width(8.dp))
             Column {
                 Text(file.name, fontWeight = FontWeight.Medium)
@@ -338,20 +315,28 @@ fun TerminalScreen() {
     fun exec() {
         val cmd = state.currentCommand.trim()
         if (cmd.isBlank() || state.isExecuting) return
-        state = state.copy(currentCommand = "", isExecuting = true, commandHistory = (state.commandHistory + "\$ $cmd").toMutableList())
+        state = state.copy(currentCommand = "", isExecuting = true)
         scope.launch {
-            val res = execCommandSafe(cmd, state.currentDirectory, rootAvailable)
-            state = state.copy(isExecuting = false, commandHistory = (state.commandHistory + res.lines()).toMutableList())
+            val res = withContext(Dispatchers.IO) {
+                try {
+                    val process = if (rootAvailable) {
+                        Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+                    } else {
+                        Runtime.getRuntime().exec(cmd)
+                    }
+                    BufferedReader(InputStreamReader(process.inputStream)).readText()
+                } catch (e: Exception) {
+                    "错误: ${e.message}"
+                }
+            }
+            state = state.copy(isExecuting = false, commandHistory = (state.commandHistory + "\$ $cmd\n$res").toMutableList())
         }
     }
 
     Column(Modifier.fillMaxSize().padding(8.dp)) {
         Surface(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
-                Modifier
-                    .padding(12.dp)
-                    .overScrollVertical()
-                    .scrollEndHaptic(),
+                Modifier.padding(12.dp).overScrollVertical().scrollEndHaptic(),
                 reverseLayout = true,
                 overscrollEffect = null
             ) {
