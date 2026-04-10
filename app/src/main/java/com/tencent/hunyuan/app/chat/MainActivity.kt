@@ -48,6 +48,34 @@ import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 import top.yukonga.miuix.kmp.utils.pressable
 import top.yukonga.miuix.kmp.utils.TiltFeedback
 
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.Date
+
+/**
+ * 格式化文件日期（26-04-10 18:37）
+ */
+fun formatFileDate(time: Long): String {
+    return SimpleDateFormat("yy-MM-dd HH:mm", Locale.getDefault()).format(Date(time))
+}
+
+/**
+ * ROOT下获取文件权限字符串
+ */
+suspend fun getFilePermission(file: File): String {
+    return withContext(Dispatchers.IO) {
+        try {
+            val path = file.absolutePath
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls -l $path | head -n1"))
+            val line = BufferedReader(InputStreamReader(process.inputStream)).readLine()
+            process.destroy()
+            line?.split(" ")?.firstOrNull() ?: "-?????????"
+        } catch (e: Exception) {
+            "-?????????"
+        }
+    }
+}
+
 // ====================== 状态数据类 ======================
 data class FileManagerState(
     val currentDirectory: String = Environment.getExternalStorageDirectory().absolutePath,
@@ -429,7 +457,9 @@ fun BackFolderItem(parentDir: File?, onNavigate: (File) -> Unit) {
 }
 
 /**
- * 文件/文件夹 列表项
+ * 文件/文件夹 列表项（最终版）
+ * 文件夹 = 显示修改日期
+ * 文件 = 显示权限 + 大小
  */
 @Composable
 fun FileItem(
@@ -440,6 +470,16 @@ fun FileItem(
     onLongClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    var permission by remember { mutableStateOf("-?????????") }
+    val size = formatSize(file.length())
+    val date = formatFileDate(file.lastModified())
+
+    // 只有【文件】才加载权限
+    LaunchedEffect(file) {
+        if (!isDir) {
+            permission = getFilePermission(file)
+        }
+    }
 
     Surface(
         modifier = Modifier
@@ -461,7 +501,15 @@ fun FileItem(
             Spacer(Modifier.width(8.dp))
             Column {
                 Text(file.name, fontWeight = FontWeight.Medium)
-                Text(if (isDir) "文件夹" else formatSize(file.length()))
+
+                // ====================== 最终逻辑 ======================
+                if (isDir) {
+                    // ✅ 文件夹：显示日期
+                    Text(date)
+                } else {
+                    // ✅ 文件：显示 权限 + 大小
+                    Text("$permission $size")
+                }
             }
         }
     }
