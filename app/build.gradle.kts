@@ -5,16 +5,13 @@ plugins {
 
 android {
     namespace = "com.tencent.hunyuan.app.chat"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    // 🔥 Miuix 0.9.0 强制要求 compileSdk 37
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.tencent.hunyuan.app.chat"
         minSdk = 31
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 
@@ -56,10 +53,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation("androidx.compose.material:material-icons-extended:1.6.3")
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4:1.6.3")
-    // Root权限和shell执行相关
     implementation("com.jrummyapps:android-shell:1.0.1")
-    // 文件操作增强
     implementation("commons-io:commons-io:2.11.0")
-    implementation("androidx.core:core:1.12.0")
+    implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.0")
 }
