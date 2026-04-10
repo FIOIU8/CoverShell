@@ -41,6 +41,7 @@ import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.util.concurrent.TimeUnit
 
 data class FileManagerState(
     val currentDirectory: String = Environment.getExternalStorageDirectory().absolutePath,
@@ -118,7 +119,7 @@ fun MainUI() {
         AlertDialog(
             onDismissRequest = { showAbout = false },
             title = { Text("关于") },
-            text = { Text("自动 Root 适配文件管理器\n支持 / /system /data 目录") },
+            text = { Text("自动 Root 适配文件管理器\n修复终端su卡死") },
             confirmButton = { TextButton(onClick = { showAbout = false }) { Text("确定") } }
         )
     }
@@ -129,10 +130,46 @@ suspend fun hasRoot(): Boolean {
         try {
             val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
             val text = BufferedReader(InputStreamReader(p.inputStream)).readText()
-            p.waitFor()
+            p.waitFor(1, TimeUnit.SECONDS)
+            p.destroy()
             text.contains("uid=0(root)")
         } catch (e: Exception) {
             false
+        }
+    }
+}
+
+suspend fun execCommandSafe(
+    command: String,
+    directory: String,
+    useRoot: Boolean
+): String {
+    return withContext(Dispatchers.IO) {
+        try {
+            val dir = File(directory)
+            val process = if (useRoot) {
+                ProcessBuilder("su", "-c", command)
+                    .directory(dir)
+                    .redirectErrorStream(true)
+                    .start()
+            } else {
+                ProcessBuilder("sh", "-c", command)
+                    .directory(dir)
+                    .redirectErrorStream(true)
+                    .start()
+            }
+
+            val finished = process.waitFor(5, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroy()
+                return@withContext "错误：命令超时"
+            }
+
+            BufferedReader(InputStreamReader(process.inputStream)).use {
+                it.readText().trim()
+            }
+        } catch (e: Exception) {
+            "错误：${e.message}"
         }
     }
 }
@@ -152,7 +189,8 @@ suspend fun getFilesAuto(path: String): List<File> {
                     list.add(File(path, name))
                 }
                 r.close()
-                p.waitFor()
+                p.waitFor(1, TimeUnit.SECONDS)
+                p.destroy()
                 list
             } else {
                 File(path).listFiles()?.toList() ?: emptyList()
@@ -314,29 +352,30 @@ fun formatSize(s: Long): String {
 fun TerminalScreen(modifier: Modifier = Modifier) {
     var state by remember { mutableStateOf(TerminalState()) }
     val scope = rememberCoroutineScope()
+    var rootAvailable by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        rootAvailable = hasRoot()
+    }
 
     fun exec() {
-        if (state.currentCommand.isBlank() || state.isExecuting) return
         val cmd = state.currentCommand.trim()
+        if (cmd.isBlank() || state.isExecuting) return
+
         state = state.copy(
             currentCommand = "",
             isExecuting = true,
             commandHistory = (state.commandHistory + "\$ $cmd").toMutableList()
         )
 
-        scope.launch(Dispatchers.IO) {
-            val res = try {
-                val p = Runtime.getRuntime().exec(cmd, null, File(state.currentDirectory))
-                val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
-                val err = BufferedReader(InputStreamReader(p.errorStream)).readText()
-                out + err
-            } catch (e: Exception) {
-                "错误: ${e.message}"
-            }
+        scope.launch {
+            val useRoot = rootAvailable
+            val res = execCommandSafe(cmd, state.currentDirectory, useRoot)
 
-            withContext(Dispatchers.Main) {
-                state = state.copy(isExecuting = false, commandHistory = (state.commandHistory + res.lines()).toMutableList())
-            }
+            state = state.copy(
+                isExecuting = false,
+                commandHistory = (state.commandHistory + res.lines()).toMutableList()
+            )
         }
     }
 
@@ -352,7 +391,14 @@ fun TerminalScreen(modifier: Modifier = Modifier) {
             LazyColumn(Modifier.padding(12.dp), reverseLayout = true) {
                 items(state.commandHistory.size) { i ->
                     val t = state.commandHistory[i]
-                    Text(t, color = if (t.startsWith("$")) MaterialTheme.colorScheme.primary else Color.Unspecified)
+                    Text(
+                        t,
+                        color = when {
+                            t.startsWith("$") -> MaterialTheme.colorScheme.primary
+                            t.startsWith("错误") -> Color.Red
+                            else -> Color.Unspecified
+                        }
+                    )
                 }
             }
         }
@@ -363,16 +409,26 @@ fun TerminalScreen(modifier: Modifier = Modifier) {
                 onValueChange = { state = state.copy(currentCommand = it) },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                placeholder = { Text("命令") },
+                placeholder = { Text(if (rootAvailable) "ROOT已就绪" else "普通模式") },
                 keyboardActions = KeyboardActions(onDone = { exec() })
             )
-            Button(onClick = { exec() }, Modifier.width(80.dp)) {
-                if (state.isExecuting) CircularProgressIndicator(Modifier.size(16.dp), Color.White)
-                else Icon(Icons.Default.Send, null)
+            Button(
+                onClick = { exec() },
+                Modifier.width(80.dp),
+                enabled = !state.isExecuting
+            ) {
+                if (state.isExecuting) {
+                    CircularProgressIndicator(Modifier.size(16.dp), Color.White)
+                } else {
+                    Icon(Icons.Default.Send, null)
+                }
             }
         }
 
-        Button(onClick = { state = state.copy(commandHistory = mutableStateListOf()) }, Modifier.fillMaxWidth().padding(8.dp)) {
+        Button(
+            onClick = { state = state.copy(commandHistory = mutableStateListOf()) },
+            Modifier.fillMaxWidth().padding(8.dp)
+        ) {
             Text("清空输出")
         }
     }
